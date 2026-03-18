@@ -162,19 +162,88 @@
     renderFees();
   }
 
-  function geocode(geocoder, address) {
+  function normalizeLooseAddress(input) {
+    return String(input || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/^(대한민국|한국)\s+/, '')
+      .replace(/([가-힣]+동)(?!\s)/g, '$1 ')
+      .replace(/([가-힣]+구)(?!\s)/g, '$1 ')
+      .replace(/([가-힣]+시)(?!\s)/g, '$1 ')
+      .replace(/([가-힣]+군)(?!\s)/g, '$1 ')
+      .replace(/([가-힣]+로)(?!\s)/g, '$1 ')
+      .replace(/([가-힣]+길)(?!\s)/g, '$1 ')
+      .trim();
+  }
+
+  function extractCoord(item) {
+    if (!item) return null;
+    const x = Number(item.x);
+    const y = Number(item.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  }
+
+  function firstResolvedAddress(item, fallback) {
+    return (
+      item?.road_address?.address_name ||
+      item?.address?.address_name ||
+      item?.address_name ||
+      item?.place_name ||
+      fallback ||
+      ''
+    );
+  }
+
+  function geocodeAddressSearch(geocoder, query) {
     return new Promise((resolve, reject) => {
-      geocoder.addressSearch(address, (result, status) => {
+      geocoder.addressSearch(query, (result, status) => {
         if (status === window.kakao.maps.services.Status.OK && result?.[0]) {
+          const coord = extractCoord(result[0]);
+          if (!coord) {
+            reject(new Error(`좌표 변환 실패: ${query}`));
+            return;
+          }
           resolve({
-            x: Number(result[0].x),
-            y: Number(result[0].y),
+            ...coord,
+            resolvedAddress: firstResolvedAddress(result[0], query),
+            source: 'address',
           });
           return;
         }
-        reject(new Error(`주소 검색 실패: ${address}`));
+        reject(new Error(`주소 검색 실패: ${query}`));
       });
     });
+  }
+
+  function geocodeKeywordSearch(places, query) {
+    return new Promise((resolve, reject) => {
+      places.keywordSearch(query, (result, status) => {
+        if (status === window.kakao.maps.services.Status.OK && result?.[0]) {
+          const coord = extractCoord(result[0]);
+          if (!coord) {
+            reject(new Error(`키워드 좌표 변환 실패: ${query}`));
+            return;
+          }
+          resolve({
+            ...coord,
+            resolvedAddress: firstResolvedAddress(result[0], query),
+            source: 'keyword',
+          });
+          return;
+        }
+        reject(new Error(`키워드 검색 실패: ${query}`));
+      });
+    });
+  }
+
+  async function geocode(geocoder, places, address) {
+    const query = normalizeLooseAddress(address);
+    try {
+      return await geocodeAddressSearch(geocoder, query);
+    } catch (addressError) {
+      return geocodeKeywordSearch(places, query);
+    }
   }
 
   function haversineKm(a, b) {
@@ -221,12 +290,18 @@
     try {
       await ensureKakaoReady();
       const geocoder = new window.kakao.maps.services.Geocoder();
-      const origin = await geocode(geocoder, state.startAddress);
-      const destination = await geocode(geocoder, state.endAddress);
+      const places = new window.kakao.maps.services.Places();
+      const origin = await geocode(geocoder, places, state.startAddress);
+      const destination = await geocode(geocoder, places, state.endAddress);
+      state.startAddress = origin.resolvedAddress || state.startAddress;
+      state.endAddress = destination.resolvedAddress || state.endAddress;
+      els.start.value = state.startAddress;
+      els.end.value = state.endAddress;
 
       try {
         state.distanceKm = await fetchRoadDistanceKm(origin, destination);
-        state.distanceMeta = '카카오 도로거리 기준으로 계산됐어요.';
+        const sourceNote = origin.source === 'keyword' || destination.source === 'keyword' ? ' (동/역/건물명 기준 러프 매칭 포함)' : '';
+        state.distanceMeta = `카카오 도로거리 기준으로 계산됐어요${sourceNote}.`;
       } catch (roadError) {
         console.warn('Road distance fallback:', roadError);
         const base = haversineKm(origin, destination);
@@ -237,9 +312,9 @@
     } catch (error) {
       console.error(error);
       state.distanceKm = 0;
-      state.distanceMeta = '주소를 다시 확인해주세요.';
+      state.distanceMeta = '주소를 다시 확인해주세요. 동 이름이나 건물명까지만 적어도 다시 시도해볼 수 있어요.';
       renderAll();
-      alert('거리 계산에 실패했어. 도로명 주소나 건물명을 더 구체적으로 적어줘.');
+      alert('거리 계산에 실패했어. 부개동, 화곡동처럼 러프한 주소도 되는데, 인식이 안 되면 구/동 또는 건물명을 한 번 더 붙여서 적어줘.');
     } finally {
       els.calcBtn.disabled = false;
       els.calcBtn.textContent = '거리 계산하기';
