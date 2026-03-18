@@ -1,0 +1,353 @@
+(() => {
+  const PHONE_NUMBER = '01040941666';
+  const HELPER_FEE = 15000;
+  const state = {
+    startAddress: '',
+    endAddress: '',
+    distanceKm: 0,
+    distanceMeta: '카카오 주소 기준으로 계산됩니다.',
+    selected: {},
+    helperFrom: false,
+    helperTo: false,
+  };
+
+  const ITEM_GROUPS = {
+    small: {
+      title: '소형짐',
+      copy: '혼자 들 수 있지만 승용차로 옮기기 애매한 짐들이에요.',
+      items: [
+        ['리빙박스', '정리박스, 수납박스'],
+        ['이민가방 / 대형가방', '대형 여행가방 포함'],
+        ['컴퓨터 본체', '데스크톱 본체'],
+        ['모니터', '개별 모니터'],
+        ['프린터', '가정용 / 소형'],
+        ['선풍기', '스탠드형 포함'],
+        ['소형 공기청정기', '일반 가정용'],
+        ['전자레인지', '소형 가전'],
+        ['청소기', '유선 / 무선'],
+        ['소형 선반', '작은 조립 선반'],
+        ['접이식 의자', '캠핑 / 보조 의자'],
+        ['소형 화분', '작은 화분류'],
+      ],
+    },
+    medium: {
+      title: '중형짐',
+      copy: '승용차로는 어렵고 용달차가 필요한 대표 짐들이에요.',
+      items: [
+        ['책상', '소형 / 일반 책상'],
+        ['행거', '이동형 행거'],
+        ['싱글 매트리스', '1인용 매트리스'],
+        ['TV', '중소형 TV'],
+        ['TV다이', '작은 거실장'],
+        ['서랍장', '소형 / 중형'],
+        ['소형 냉장고', '원룸 냉장고'],
+        ['소형 세탁기', '통돌이 / 소형'],
+        ['자전거', '일반 자전거'],
+        ['소형 소파', '1~2인용'],
+        ['2인용 식탁', '소형 식탁'],
+        ['책장', '일반 책장'],
+      ],
+    },
+    large: {
+      title: '대형짐',
+      copy: '부피가 크고 작업 판단이 필요한 대형 짐들이에요.',
+      items: [
+        ['일반 냉장고', '가정용 냉장고'],
+        ['드럼 세탁기', '대형 세탁기'],
+        ['건조기', '스탠드형 포함'],
+        ['퀸 / 킹 매트리스', '대형 매트리스'],
+        ['침대 프레임', '분해 여부 별도 확인'],
+        ['3인용 이상 소파', '거실용 대형 소파'],
+        ['장롱', '의류장'],
+        ['대형 서랍장', '부피 큰 수납장'],
+        ['안마의자', '고중량'],
+        ['4인 이상 식탁', '중대형 식탁'],
+        ['쇼케이스 / 업소장비', '매장 장비류'],
+        ['대형 화분', '무게 큰 화분'],
+      ],
+    },
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  const els = {
+    start: $('#startAddress'),
+    end: $('#endAddress'),
+    calcBtn: $('#calcDistanceBtn'),
+    distanceText: $('#distanceText'),
+    distanceMeta: $('#distanceMeta'),
+    summary: $('#selectedItemsSummary'),
+    helpFrom: $('#helpFrom'),
+    helpTo: $('#helpTo'),
+    distanceFeeText: $('#distanceFeeText'),
+    helperFeeText: $('#helperFeeText'),
+    totalFeeText: $('#totalFeeText'),
+    smsBtn: $('#smsBtn'),
+    modal: $('#itemsModal'),
+    modalTitle: $('#modalTitle'),
+    modalCopy: $('#modalCopy'),
+    modalList: $('#modalList'),
+    modalConfirmBtn: $('#modalConfirmBtn'),
+  };
+
+  let activeSize = null;
+  let kakaoReadyPromise = null;
+
+  function ensureKakaoReady() {
+    if (kakaoReadyPromise) return kakaoReadyPromise;
+    kakaoReadyPromise = new Promise((resolve, reject) => {
+      if (!window.kakao || !window.kakao.maps) {
+        reject(new Error('Kakao Maps SDK not loaded'));
+        return;
+      }
+      window.kakao.maps.load(() => {
+        if (window.kakao?.maps?.services) resolve(window.kakao);
+        else reject(new Error('Kakao services not available'));
+      });
+    });
+    return kakaoReadyPromise;
+  }
+
+  function formatWon(v) {
+    return `${Math.round(v || 0).toLocaleString()}원`;
+  }
+
+  function moveDistanceFee(km) {
+    const d = Math.max(0, Number(km) || 0);
+    const a = Math.min(d, 10) * 2000;
+    const b = Math.max(0, d - 10) * 1550;
+    return Math.round(a + b);
+  }
+
+  function helperFee() {
+    return (state.helperFrom ? HELPER_FEE : 0) + (state.helperTo ? HELPER_FEE : 0);
+  }
+
+  function totalFee() {
+    return moveDistanceFee(state.distanceKm) + helperFee();
+  }
+
+  function currentSelectedEntries() {
+    return Object.entries(state.selected)
+      .filter(([, qty]) => qty > 0)
+      .map(([name, qty]) => `${name}${qty > 1 ? ` ×${qty}` : ''}`);
+  }
+
+  function renderSummary() {
+    const items = currentSelectedEntries();
+    if (!items.length) {
+      els.summary.textContent = '아직 선택한 짐이 없어요.';
+      els.summary.classList.add('empty');
+      return;
+    }
+    els.summary.textContent = items.join(', ');
+    els.summary.classList.remove('empty');
+  }
+
+  function renderFees() {
+    els.distanceFeeText.textContent = formatWon(moveDistanceFee(state.distanceKm));
+    els.helperFeeText.textContent = formatWon(helperFee());
+    els.totalFeeText.textContent = formatWon(totalFee());
+  }
+
+  function renderDistance() {
+    els.distanceText.textContent = state.distanceKm > 0 ? `${state.distanceKm.toFixed(1)} km` : '주소를 입력해주세요';
+    els.distanceMeta.textContent = state.distanceMeta;
+  }
+
+  function renderAll() {
+    renderDistance();
+    renderSummary();
+    renderFees();
+  }
+
+  function geocode(geocoder, address) {
+    return new Promise((resolve, reject) => {
+      geocoder.addressSearch(address, (result, status) => {
+        if (status === window.kakao.maps.services.Status.OK && result?.[0]) {
+          resolve({
+            x: Number(result[0].x),
+            y: Number(result[0].y),
+          });
+          return;
+        }
+        reject(new Error(`주소 검색 실패: ${address}`));
+      });
+    });
+  }
+
+  function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = ((b.y - a.y) * Math.PI) / 180;
+    const dLon = ((b.x - a.x) * Math.PI) / 180;
+    const lat1 = (a.y * Math.PI) / 180;
+    const lat2 = (b.y * Math.PI) / 180;
+    const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  }
+
+  async function fetchRoadDistanceKm(origin, destination) {
+    const params = new URLSearchParams({
+      origin: `${origin.x},${origin.y}`,
+      destination: `${destination.x},${destination.y}`,
+    });
+
+    const res = await fetch(`/.netlify/functions/kakaoDirections?${params.toString()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Road distance failed: ${res.status}`);
+    }
+    const data = await res.json();
+    const meter = data?.routes?.[0]?.summary?.distance;
+    if (!Number.isFinite(meter)) throw new Error('No road distance data');
+    return Math.round((meter / 1000) * 10) / 10;
+  }
+
+  async function calculateDistance() {
+    state.startAddress = (els.start.value || '').trim();
+    state.endAddress = (els.end.value || '').trim();
+
+    if (!state.startAddress || !state.endAddress) {
+      alert('출발지와 도착지 주소를 모두 입력해줘.');
+      return;
+    }
+
+    els.calcBtn.disabled = true;
+    els.calcBtn.textContent = '계산 중...';
+    state.distanceMeta = '주소를 확인하고 있어요.';
+    renderDistance();
+
+    try {
+      await ensureKakaoReady();
+      const geocoder = new window.kakao.maps.services.Geocoder();
+      const origin = await geocode(geocoder, state.startAddress);
+      const destination = await geocode(geocoder, state.endAddress);
+
+      try {
+        state.distanceKm = await fetchRoadDistanceKm(origin, destination);
+        state.distanceMeta = '카카오 도로거리 기준으로 계산됐어요.';
+      } catch (roadError) {
+        console.warn('Road distance fallback:', roadError);
+        const base = haversineKm(origin, destination);
+        state.distanceKm = Math.round(base * 1.25 * 10) / 10;
+        state.distanceMeta = '카카오 주소 좌표 기준 직선거리 보정값으로 계산됐어요.';
+      }
+      renderAll();
+    } catch (error) {
+      console.error(error);
+      state.distanceKm = 0;
+      state.distanceMeta = '주소를 다시 확인해주세요.';
+      renderAll();
+      alert('거리 계산에 실패했어. 도로명 주소나 건물명을 더 구체적으로 적어줘.');
+    } finally {
+      els.calcBtn.disabled = false;
+      els.calcBtn.textContent = '거리 계산하기';
+    }
+  }
+
+  function openModal(sizeKey) {
+    activeSize = sizeKey;
+    const group = ITEM_GROUPS[sizeKey];
+    els.modalTitle.textContent = group.title;
+    els.modalCopy.textContent = group.copy;
+    els.modalList.innerHTML = '';
+
+    group.items.forEach(([name, desc]) => {
+      const qty = state.selected[name] || 0;
+      const row = document.createElement('div');
+      row.className = 'item-row';
+      row.innerHTML = `
+        <div class="item-label">
+          <strong>${name}</strong>
+          <small>${desc}</small>
+        </div>
+        <div class="stepper">
+          <button type="button" data-item-minus="${name}">−</button>
+          <input type="number" min="0" value="${qty}" data-item-input="${name}" />
+          <button type="button" data-item-plus="${name}">+</button>
+        </div>
+      `;
+      els.modalList.appendChild(row);
+    });
+
+    els.modal.classList.remove('hidden');
+    els.modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeModal() {
+    els.modal.classList.add('hidden');
+    els.modal.setAttribute('aria-hidden', 'true');
+    activeSize = null;
+    renderSummary();
+  }
+
+  function setItemQty(name, next) {
+    const value = Math.max(0, parseInt(next, 10) || 0);
+    if (value <= 0) delete state.selected[name];
+    else state.selected[name] = value;
+    renderSummary();
+  }
+
+  function smsBody() {
+    const items = currentSelectedEntries();
+    const helperText = [
+      state.helperFrom ? '출발지 도움' : null,
+      state.helperTo ? '도착지 도움' : null,
+    ].filter(Boolean).join(', ') || '없음';
+
+    return [
+      '디디운송 용달 예약 문의',
+      `출발지: ${state.startAddress || '-'}`,
+      `도착지: ${state.endAddress || '-'}`,
+      `거리: ${state.distanceKm > 0 ? `${state.distanceKm.toFixed(1)}km` : '-'}`,
+      `선택 품목: ${items.length ? items.join(', ') : '없음'}`,
+      `기사 도움: ${helperText}`,
+      `예상 용달비: ${formatWon(totalFee())}`,
+    ].join('\n');
+  }
+
+  function goSms() {
+    const body = encodeURIComponent(smsBody());
+    window.location.href = `sms:${PHONE_NUMBER}?body=${body}`;
+  }
+
+  $$('.size-card').forEach((btn) => btn.addEventListener('click', () => openModal(btn.dataset.size)));
+  els.calcBtn.addEventListener('click', calculateDistance);
+  els.helpFrom.addEventListener('change', (e) => { state.helperFrom = e.target.checked; renderFees(); });
+  els.helpTo.addEventListener('change', (e) => { state.helperTo = e.target.checked; renderFees(); });
+  els.smsBtn.addEventListener('click', goSms);
+  els.modalConfirmBtn.addEventListener('click', closeModal);
+
+  els.modal.addEventListener('click', (e) => {
+    const closeTrigger = e.target.closest('[data-close-modal]');
+    if (closeTrigger) closeModal();
+
+    const minusBtn = e.target.closest('[data-item-minus]');
+    if (minusBtn) {
+      const name = minusBtn.getAttribute('data-item-minus');
+      const input = els.modalList.querySelector(`[data-item-input="${CSS.escape(name)}"]`);
+      const next = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
+      input.value = String(next);
+      setItemQty(name, next);
+      return;
+    }
+
+    const plusBtn = e.target.closest('[data-item-plus]');
+    if (plusBtn) {
+      const name = plusBtn.getAttribute('data-item-plus');
+      const input = els.modalList.querySelector(`[data-item-input="${CSS.escape(name)}"]`);
+      const next = (parseInt(input.value, 10) || 0) + 1;
+      input.value = String(next);
+      setItemQty(name, next);
+    }
+  });
+
+  els.modalList.addEventListener('input', (e) => {
+    const input = e.target.closest('[data-item-input]');
+    if (!input) return;
+    setItemQty(input.getAttribute('data-item-input'), input.value);
+  });
+
+  renderAll();
+})();
