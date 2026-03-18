@@ -169,21 +169,57 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function normalizeRegionText(value) {
+    let v = cleanQuery(value);
+    const swaps = [
+      [/서울시/g, '서울'],
+      [/인천시/g, '인천'],
+      [/부산시/g, '부산'],
+      [/대구시/g, '대구'],
+      [/광주시/g, '광주'],
+      [/대전시/g, '대전'],
+      [/울산시/g, '울산'],
+      [/세종시/g, '세종'],
+      [/경기도/g, '경기'],
+      [/강원도/g, '강원'],
+      [/충청북도/g, '충북'],
+      [/충청남도/g, '충남'],
+      [/전라북도/g, '전북'],
+      [/전라남도/g, '전남'],
+      [/경상북도/g, '경북'],
+      [/경상남도/g, '경남'],
+      [/제주특별자치도/g, '제주'],
+      [/제주도/g, '제주'],
+    ];
+    for (const [from, to] of swaps) v = v.replace(from, to);
+    return cleanQuery(v);
+  }
+
   function uniqueQueries(address) {
-    const base = cleanQuery(address);
+    const base = normalizeRegionText(address);
     const list = [base];
     const parts = base.split(' ').filter(Boolean);
 
     if (parts.length >= 2) {
       list.push(parts.slice(-2).join(' '));
       list.push(parts.slice(-1).join(' '));
+      list.push(parts.slice(0, 2).join(' '));
     }
     if (parts.length >= 3) {
       list.push(parts.slice(0, 3).join(' '));
       list.push(parts.slice(1, 3).join(' '));
+      list.push(parts.slice(-3).join(' '));
     }
 
-    return [...new Set(list.filter(Boolean))];
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1];
+      const prev = parts[parts.length - 2];
+      list.push(`${prev} ${last}`);
+      list.push(last);
+      if (parts[0] && last) list.push(`${parts[0]} ${last}`);
+    }
+
+    return [...new Set(list.map(cleanQuery).filter(Boolean))];
   }
 
   function scorePlaceName(place, query) {
@@ -196,12 +232,15 @@
     for (const part of parts) {
       if (hay.includes(part)) score += part.length;
     }
+    if (place.address_name && cleanQuery(place.address_name).includes(cleanQuery(query))) score += 20;
+    if (place.road_address_name && cleanQuery(place.road_address_name).includes(cleanQuery(query))) score += 10;
     return score;
   }
 
   async function geocode(geocoder, address) {
     const kakao = window.kakao;
     const queries = uniqueQueries(address);
+    const places = new kakao.maps.services.Places();
 
     const tryAddressSearch = (query) =>
       new Promise((resolve, reject) => {
@@ -224,7 +263,6 @@
 
     const tryKeywordSearch = (query) =>
       new Promise((resolve, reject) => {
-        const places = new kakao.maps.services.Places();
         places.keywordSearch(query, (result, status) => {
           if (status === kakao.maps.services.Status.OK && result?.length) {
             const best = [...result].sort(
@@ -249,18 +287,14 @@
     let lastError = null;
 
     for (const query of queries) {
-      try {
-        return await tryAddressSearch(query);
-      } catch (err) {
-        lastError = err;
-      }
-    }
-
-    for (const query of queries) {
-      try {
-        return await tryKeywordSearch(query);
-      } catch (err) {
-        lastError = err;
+      const rough = query.split(' ').length <= 2;
+      const attempts = rough ? [tryKeywordSearch, tryAddressSearch] : [tryAddressSearch, tryKeywordSearch];
+      for (const attempt of attempts) {
+        try {
+          return await attempt(query);
+        } catch (err) {
+          lastError = err;
+        }
       }
     }
 
@@ -347,9 +381,9 @@
     } catch (error) {
       console.error(error);
       state.distanceKm = 0;
-      state.distanceMeta = '주소를 다시 확인해주세요.';
+      state.distanceMeta = '입력하신 주소를 다시 확인해주세요. 동 이름이나 역 이름, 건물명만 넣어도 다시 시도할 수 있어요.';
       renderAll();
-      alert('거리 계산에 실패했어. 부개동, 화곡동처럼 러프한 주소도 되지만 안 잡히면 구/동 또는 건물명을 한 번 더 붙여줘.');
+      alert('거리 계산에 실패했어. 부개동, 화곡동처럼 러프한 주소도 최대한 찾도록 되어 있어. 그래도 안 되면 구 이름이나 역 이름, 건물명을 한 번 더 붙여줘.');
     } finally {
       els.calcBtn.disabled = false;
       els.calcBtn.textContent = '거리 계산하기';
