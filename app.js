@@ -4,7 +4,8 @@
   const PHONE_NUMBER = '01075416143';
   const HELPER_FEE = 15000;
   const BASE_VEHICLE_FEE = 30000;
-  const KAKAO_READY_TIMEOUT = 12000;
+  const KAKAO_READY_TIMEOUT = 15000;
+  const KAKAO_SDK_BASE = 'https://dapi.kakao.com/v2/maps/sdk.js';
 
   const state = {
     startAddress: '',
@@ -105,34 +106,114 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function waitForKakaoGlobals(timeoutMs = KAKAO_READY_TIMEOUT) {
+  function getKakaoJsKey() {
+    return (
+      document.documentElement.getAttribute('data-kakao-js-key') ||
+      $('meta[name="kakao-javascript-key"]')?.getAttribute('content') ||
+      window.KAKAO_JS_KEY ||
+      ''
+    ).trim();
+  }
+
+  function buildKakaoSdkUrl() {
+    const key = getKakaoJsKey();
+    if (!key) return '';
+    const url = new URL(KAKAO_SDK_BASE);
+    url.searchParams.set('appkey', key);
+    url.searchParams.set('libraries', 'services');
+    url.searchParams.set('autoload', 'false');
+    return url.toString();
+  }
+
+  function findKakaoScript() {
+    return Array.from(document.scripts).find((script) =>
+      String(script.src || '').includes('dapi.kakao.com/v2/maps/sdk.js')
+    ) || null;
+  }
+
+  function waitForKakaoGlobals(timeoutMs = KAKAO_READY_TIMEOUT) {
     const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-      if (window.kakao && window.kakao.maps) return true;
-      await wait(120);
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (window.kakao?.maps) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - started >= timeoutMs) {
+          resolve(false);
+          return;
+        }
+        setTimeout(tick, 120);
+      };
+      tick();
+    });
+  }
+
+  async function ensureKakaoScriptLoaded() {
+    if (window.kakao?.maps) return true;
+
+    let script = findKakaoScript();
+    if (!script) {
+      const sdkUrl = buildKakaoSdkUrl();
+      if (!sdkUrl) {
+        throw new Error('카카오 JavaScript 키가 비어 있어 SDK를 불러올 수 없어요.');
+      }
+      script = document.createElement('script');
+      script.src = sdkUrl;
+      script.async = true;
+      script.setAttribute('data-kakao-sdk', 'true');
+      document.head.appendChild(script);
     }
-    return false;
+
+    const loaded = await Promise.race([
+      new Promise((resolve, reject) => {
+        const cleanup = () => {
+          script.removeEventListener('load', onLoad);
+          script.removeEventListener('error', onError);
+        };
+        const onLoad = () => {
+          cleanup();
+          resolve(true);
+        };
+        const onError = () => {
+          cleanup();
+          reject(new Error('카카오 SDK 스크립트 로드에 실패했어요. 도메인 등록 또는 키를 확인해줘.'));
+        };
+        script.addEventListener('load', onLoad, { once: true });
+        script.addEventListener('error', onError, { once: true });
+      }),
+      waitForKakaoGlobals(KAKAO_READY_TIMEOUT),
+    ]);
+
+    if (!loaded && !window.kakao?.maps) {
+      throw new Error('Kakao Maps SDK not loaded');
+    }
+    return true;
   }
 
   function ensureKakaoReady() {
     if (kakaoReadyPromise) return kakaoReadyPromise;
 
-    kakaoReadyPromise = new Promise(async (resolve, reject) => {
-      const loaded = await waitForKakaoGlobals();
-      if (!loaded) {
-        reject(new Error('Kakao Maps SDK not loaded'));
-        return;
+    kakaoReadyPromise = (async () => {
+      await ensureKakaoScriptLoaded();
+
+      if (!window.kakao?.maps) {
+        throw new Error('Kakao Maps SDK not loaded');
       }
 
-      try {
-        window.kakao.maps.load(() => {
-          if (window.kakao?.maps?.services) resolve(window.kakao);
-          else reject(new Error('Kakao services not available'));
-        });
-      } catch (error) {
-        reject(error);
-      }
-    }).catch((error) => {
+      await new Promise((resolve, reject) => {
+        try {
+          window.kakao.maps.load(() => {
+            if (window.kakao?.maps?.services) resolve();
+            else reject(new Error('Kakao services not available'));
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      return window.kakao;
+    })().catch((error) => {
       kakaoReadyPromise = null;
       throw error;
     });
@@ -452,9 +533,11 @@
     } catch (error) {
       console.error(error);
       state.distanceKm = 0;
-      state.distanceMeta = '입력한 주소를 다시 확인해줘. 동 이름, 역 이름, 건물명처럼 러프한 주소도 다시 시도할 수 있어요.';
+      state.distanceMeta = error?.message?.includes('SDK') || error?.message?.includes('도메인 등록')
+        ? '카카오 지도 SDK 연결에 실패했어요. 카카오 개발자 콘솔의 사이트 도메인 등록과 JavaScript 키를 확인해줘.'
+        : '입력한 주소를 다시 확인해줘. 동 이름, 역 이름, 건물명처럼 러프한 주소도 다시 시도할 수 있어요.';
       renderAll();
-      alert('거리 계산에 실패했어. 예: 부개동, 화곡동, 까치산역처럼 다시 입력해봐.');
+      alert(state.distanceMeta);
     } finally {
       setCalcButtonLoading(false);
     }
@@ -629,4 +712,8 @@
 
   bindEvents();
   renderAll();
+
+  ensureKakaoReady().catch((error) => {
+    console.warn('Kakao SDK preload failed:', error);
+  });
 })();
