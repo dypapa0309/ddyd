@@ -1,6 +1,8 @@
 (() => {
-  const PHONE_NUMBER = '01040941666';
+  const PHONE_NUMBER = '01075416143';
   const HELPER_FEE = 15000;
+  const BASE_VEHICLE_FEE = 30000;
+
   const state = {
     startAddress: '',
     endAddress: '',
@@ -113,11 +115,12 @@
     return `${Math.round(v || 0).toLocaleString()}원`;
   }
 
+  // 기본 차값 30,000원 + 기존 거리 수식
   function moveDistanceFee(km) {
     const d = Math.max(0, Number(km) || 0);
     const a = Math.min(d, 10) * 2000;
     const b = Math.max(0, d - 10) * 1550;
-    return Math.round(a + b);
+    return Math.round(BASE_VEHICLE_FEE + a + b);
   }
 
   function helperFee() {
@@ -170,6 +173,7 @@
     const base = cleanQuery(address);
     const list = [base];
     const parts = base.split(' ').filter(Boolean);
+
     if (parts.length >= 2) {
       list.push(parts.slice(-2).join(' '));
       list.push(parts.slice(-1).join(' '));
@@ -178,12 +182,16 @@
       list.push(parts.slice(0, 3).join(' '));
       list.push(parts.slice(1, 3).join(' '));
     }
+
     return [...new Set(list.filter(Boolean))];
   }
 
   function scorePlaceName(place, query) {
-    const hay = [place.place_name, place.address_name, place.road_address_name].filter(Boolean).join(' ');
+    const hay = [place.place_name, place.address_name, place.road_address_name]
+      .filter(Boolean)
+      .join(' ');
     const parts = cleanQuery(query).split(' ').filter(Boolean);
+
     let score = 0;
     for (const part of parts) {
       if (hay.includes(part)) score += part.length;
@@ -194,39 +202,52 @@
   async function geocode(geocoder, address) {
     const kakao = window.kakao;
     const queries = uniqueQueries(address);
-    const tryAddressSearch = (query) => new Promise((resolve, reject) => {
-      geocoder.addressSearch(query, (result, status) => {
-        if (status === kakao.maps.services.Status.OK && result?.[0]) {
-          resolve({
-            x: Number(result[0].x),
-            y: Number(result[0].y),
-            matchedAddress: result[0].address_name || result[0].road_address?.address_name || query,
-            method: 'address',
-          });
-          return;
-        }
-        reject(new Error(`addressSearch failed: ${query}`));
-      });
-    });
 
-    const tryKeywordSearch = (query) => new Promise((resolve, reject) => {
-      const places = new kakao.maps.services.Places();
-      places.keywordSearch(query, (result, status) => {
-        if (status === kakao.maps.services.Status.OK && result?.length) {
-          const best = [...result].sort((a, b) => scorePlaceName(b, query) - scorePlaceName(a, query))[0];
-          resolve({
-            x: Number(best.x),
-            y: Number(best.y),
-            matchedAddress: best.address_name || best.road_address_name || best.place_name || query,
-            method: 'keyword',
-          });
-          return;
-        }
-        reject(new Error(`keywordSearch failed: ${query}`));
+    const tryAddressSearch = (query) =>
+      new Promise((resolve, reject) => {
+        geocoder.addressSearch(query, (result, status) => {
+          if (status === kakao.maps.services.Status.OK && result?.[0]) {
+            resolve({
+              x: Number(result[0].x),
+              y: Number(result[0].y),
+              matchedAddress:
+                result[0].address_name ||
+                result[0].road_address?.address_name ||
+                query,
+              method: 'address',
+            });
+            return;
+          }
+          reject(new Error(`addressSearch failed: ${query}`));
+        });
       });
-    });
+
+    const tryKeywordSearch = (query) =>
+      new Promise((resolve, reject) => {
+        const places = new kakao.maps.services.Places();
+        places.keywordSearch(query, (result, status) => {
+          if (status === kakao.maps.services.Status.OK && result?.length) {
+            const best = [...result].sort(
+              (a, b) => scorePlaceName(b, query) - scorePlaceName(a, query)
+            )[0];
+            resolve({
+              x: Number(best.x),
+              y: Number(best.y),
+              matchedAddress:
+                best.address_name ||
+                best.road_address_name ||
+                best.place_name ||
+                query,
+              method: 'keyword',
+            });
+            return;
+          }
+          reject(new Error(`keywordSearch failed: ${query}`));
+        });
+      });
 
     let lastError = null;
+
     for (const query of queries) {
       try {
         return await tryAddressSearch(query);
@@ -252,7 +273,9 @@
     const dLon = ((b.x - a.x) * Math.PI) / 180;
     const lat1 = (a.y * Math.PI) / 180;
     const lat2 = (b.y * Math.PI) / 180;
-    const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    const x =
+      Math.sin(dLat / 2) ** 2 +
+      Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
     return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   }
 
@@ -267,9 +290,11 @@
       const text = await res.text();
       throw new Error(text || `Road distance failed: ${res.status}`);
     }
+
     const data = await res.json();
     const meter = data?.routes?.[0]?.summary?.distance;
     if (!Number.isFinite(meter)) throw new Error('No road distance data');
+
     return Math.round((meter / 1000) * 10) / 10;
   }
 
@@ -290,20 +315,34 @@
     try {
       await ensureKakaoReady();
       const geocoder = new window.kakao.maps.services.Geocoder();
+
       const origin = await geocode(geocoder, state.startAddress);
       const destination = await geocode(geocoder, state.endAddress);
-      if (origin?.matchedAddress) { state.startAddress = origin.matchedAddress; els.start.value = origin.matchedAddress; }
-      if (destination?.matchedAddress) { state.endAddress = destination.matchedAddress; els.end.value = destination.matchedAddress; }
+
+      if (origin?.matchedAddress) {
+        state.startAddress = origin.matchedAddress;
+        els.start.value = origin.matchedAddress;
+      }
+
+      if (destination?.matchedAddress) {
+        state.endAddress = destination.matchedAddress;
+        els.end.value = destination.matchedAddress;
+      }
 
       try {
         state.distanceKm = await fetchRoadDistanceKm(origin, destination);
-        state.distanceMeta = `카카오 ${origin.method === 'keyword' || destination.method === 'keyword' ? '키워드/주소' : '주소'} 기준으로 계산됐어요.`;
+        state.distanceMeta = `카카오 ${
+          origin.method === 'keyword' || destination.method === 'keyword'
+            ? '키워드/주소'
+            : '주소'
+        } 기준으로 계산됐어요.`;
       } catch (roadError) {
         console.warn('Road distance fallback:', roadError);
         const base = haversineKm(origin, destination);
         state.distanceKm = Math.round(base * 1.25 * 10) / 10;
         state.distanceMeta = '카카오 검색 좌표 기준 보정거리로 계산됐어요.';
       }
+
       renderAll();
     } catch (error) {
       console.error(error);
@@ -383,10 +422,22 @@
     window.location.href = `sms:${PHONE_NUMBER}?body=${body}`;
   }
 
-  $$('.size-card').forEach((btn) => btn.addEventListener('click', () => openModal(btn.dataset.size)));
+  $$('.size-card').forEach((btn) =>
+    btn.addEventListener('click', () => openModal(btn.dataset.size))
+  );
+
   els.calcBtn.addEventListener('click', calculateDistance);
-  els.helpFrom.addEventListener('change', (e) => { state.helperFrom = e.target.checked; renderFees(); });
-  els.helpTo.addEventListener('change', (e) => { state.helperTo = e.target.checked; renderFees(); });
+
+  els.helpFrom.addEventListener('change', (e) => {
+    state.helperFrom = e.target.checked;
+    renderFees();
+  });
+
+  els.helpTo.addEventListener('change', (e) => {
+    state.helperTo = e.target.checked;
+    renderFees();
+  });
+
   els.smsBtn.addEventListener('click', goSms);
   els.modalConfirmBtn.addEventListener('click', closeModal);
 
@@ -397,7 +448,9 @@
     const minusBtn = e.target.closest('[data-item-minus]');
     if (minusBtn) {
       const name = minusBtn.getAttribute('data-item-minus');
-      const input = els.modalList.querySelector(`[data-item-input="${CSS.escape(name)}"]`);
+      const input = els.modalList.querySelector(
+        `[data-item-input="${CSS.escape(name)}"]`
+      );
       const next = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
       input.value = String(next);
       setItemQty(name, next);
@@ -407,7 +460,9 @@
     const plusBtn = e.target.closest('[data-item-plus]');
     if (plusBtn) {
       const name = plusBtn.getAttribute('data-item-plus');
-      const input = els.modalList.querySelector(`[data-item-input="${CSS.escape(name)}"]`);
+      const input = els.modalList.querySelector(
+        `[data-item-input="${CSS.escape(name)}"]`
+      );
       const next = (parseInt(input.value, 10) || 0) + 1;
       input.value = String(next);
       setItemQty(name, next);
