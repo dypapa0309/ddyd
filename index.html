@@ -31,11 +31,11 @@
         <div class="field-grid two">
           <label class="field">
             <span>출발지 주소</span>
-            <input type="text" id="startAddress" placeholder="예: 인천 부평구 부개동 123-4" autocomplete="street-address" />
+            <input type="text" id="startAddress" placeholder="예: 부개동, 부평구청역, 인천 부평구 부개동" autocomplete="street-address" />
           </label>
           <label class="field">
             <span>도착지 주소</span>
-            <input type="text" id="endAddress" placeholder="예: 서울 강서구 화곡동 567-8" autocomplete="street-address" />
+            <input type="text" id="endAddress" placeholder="예: 화곡동, 까치산역, 서울 강서구 화곡동" autocomplete="street-address" />
           </label>
         </div>
 
@@ -43,7 +43,7 @@
           <button type="button" class="primary-btn" id="calcDistanceBtn">거리 계산하기</button>
           <div class="distance-result">
             <div class="distance-line"><span class="label">계산된 거리</span><strong id="distanceText">주소를 입력해주세요</strong></div>
-            <div class="distance-line muted" id="distanceMeta">카카오 주소 기준으로 계산됩니다.</div>
+            <div class="distance-line muted" id="distanceMeta">부개동·화곡동 같은 러프한 주소도 최대한 계산해드려요.</div>
           </div>
         </div>
       </section>
