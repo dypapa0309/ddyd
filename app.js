@@ -1,7 +1,10 @@
 (() => {
+  'use strict';
+
   const PHONE_NUMBER = '01075416143';
   const HELPER_FEE = 15000;
   const BASE_VEHICLE_FEE = 30000;
+  const KAKAO_READY_TIMEOUT = 12000;
 
   const state = {
     startAddress: '',
@@ -11,6 +14,7 @@
     selected: {},
     helperFrom: false,
     helperTo: false,
+    lastOpenedSize: null,
   };
 
   const ITEM_GROUPS = {
@@ -70,8 +74,8 @@
     },
   };
 
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   const els = {
     start: $('#startAddress'),
@@ -91,31 +95,55 @@
     modalCopy: $('#modalCopy'),
     modalList: $('#modalList'),
     modalConfirmBtn: $('#modalConfirmBtn'),
+    sizeCards: $$('.size-card'),
   };
 
-  let activeSize = null;
   let kakaoReadyPromise = null;
+  let modalPreviouslyFocused = null;
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitForKakaoGlobals(timeoutMs = KAKAO_READY_TIMEOUT) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (window.kakao && window.kakao.maps) return true;
+      await wait(120);
+    }
+    return false;
+  }
 
   function ensureKakaoReady() {
     if (kakaoReadyPromise) return kakaoReadyPromise;
-    kakaoReadyPromise = new Promise((resolve, reject) => {
-      if (!window.kakao || !window.kakao.maps) {
+
+    kakaoReadyPromise = new Promise(async (resolve, reject) => {
+      const loaded = await waitForKakaoGlobals();
+      if (!loaded) {
         reject(new Error('Kakao Maps SDK not loaded'));
         return;
       }
-      window.kakao.maps.load(() => {
-        if (window.kakao?.maps?.services) resolve(window.kakao);
-        else reject(new Error('Kakao services not available'));
-      });
+
+      try {
+        window.kakao.maps.load(() => {
+          if (window.kakao?.maps?.services) resolve(window.kakao);
+          else reject(new Error('Kakao services not available'));
+        });
+      } catch (error) {
+        reject(error);
+      }
+    }).catch((error) => {
+      kakaoReadyPromise = null;
+      throw error;
     });
+
     return kakaoReadyPromise;
   }
 
-  function formatWon(v) {
-    return `${Math.round(v || 0).toLocaleString()}원`;
+  function formatWon(value) {
+    return `${Math.round(Number(value) || 0).toLocaleString('ko-KR')}원`;
   }
 
-  // 기본 차값 30,000원 + 기존 거리 수식
   function moveDistanceFee(km) {
     const d = Math.max(0, Number(km) || 0);
     const a = Math.min(d, 10) * 2000;
@@ -129,40 +157,6 @@
 
   function totalFee() {
     return moveDistanceFee(state.distanceKm) + helperFee();
-  }
-
-  function currentSelectedEntries() {
-    return Object.entries(state.selected)
-      .filter(([, qty]) => qty > 0)
-      .map(([name, qty]) => `${name}${qty > 1 ? ` ×${qty}` : ''}`);
-  }
-
-  function renderSummary() {
-    const items = currentSelectedEntries();
-    if (!items.length) {
-      els.summary.textContent = '아직 선택한 짐이 없어요.';
-      els.summary.classList.add('empty');
-      return;
-    }
-    els.summary.textContent = items.join(', ');
-    els.summary.classList.remove('empty');
-  }
-
-  function renderFees() {
-    els.distanceFeeText.textContent = formatWon(moveDistanceFee(state.distanceKm));
-    els.helperFeeText.textContent = formatWon(helperFee());
-    els.totalFeeText.textContent = formatWon(totalFee());
-  }
-
-  function renderDistance() {
-    els.distanceText.textContent = state.distanceKm > 0 ? `${state.distanceKm.toFixed(1)} km` : '주소를 입력해주세요';
-    els.distanceMeta.textContent = state.distanceMeta;
-  }
-
-  function renderAll() {
-    renderDistance();
-    renderSummary();
-    renderFees();
   }
 
   function cleanQuery(value) {
@@ -202,7 +196,7 @@
 
     if (parts.length >= 2) {
       list.push(parts.slice(-2).join(' '));
-      list.push(parts.slice(-1).join(' '));
+      list.push(parts[parts.length - 1]);
       list.push(parts.slice(0, 2).join(' '));
     }
     if (parts.length >= 3) {
@@ -210,12 +204,10 @@
       list.push(parts.slice(1, 3).join(' '));
       list.push(parts.slice(-3).join(' '));
     }
-
     if (parts.length >= 2) {
       const last = parts[parts.length - 1];
       const prev = parts[parts.length - 2];
       list.push(`${prev} ${last}`);
-      list.push(last);
       if (parts[0] && last) list.push(`${parts[0]} ${last}`);
     }
 
@@ -237,6 +229,100 @@
     return score;
   }
 
+  function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = ((b.y - a.y) * Math.PI) / 180;
+    const dLon = ((b.x - a.x) * Math.PI) / 180;
+    const lat1 = (a.y * Math.PI) / 180;
+    const lat2 = (b.y * Math.PI) / 180;
+    const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  }
+
+  function getModalInputByName(name) {
+    return Array.from($$('[data-item-input]', els.modalList)).find(
+      (input) => input.getAttribute('data-item-input') === name
+    ) || null;
+  }
+
+  function currentSelectedEntries() {
+    return Object.entries(state.selected)
+      .filter(([, qty]) => qty > 0)
+      .map(([name, qty]) => `${name}${qty > 1 ? ` ×${qty}` : ''}`);
+  }
+
+  function currentSelectedCountForGroup(groupKey) {
+    const items = ITEM_GROUPS[groupKey]?.items || [];
+    return items.reduce((sum, [name]) => sum + (Number(state.selected[name]) || 0), 0);
+  }
+
+  function renderSizeCards() {
+    els.sizeCards.forEach((card) => {
+      const groupKey = card.dataset.size;
+      const count = currentSelectedCountForGroup(groupKey);
+      card.classList.toggle('active', count > 0);
+      card.setAttribute('aria-pressed', count > 0 ? 'true' : 'false');
+
+      let badge = $('.size-count', card);
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'size-count';
+        card.appendChild(badge);
+      }
+      badge.textContent = count > 0 ? `${count}개 선택` : '미선택';
+      badge.classList.toggle('filled', count > 0);
+    });
+  }
+
+  function renderSummary() {
+    const items = currentSelectedEntries();
+    if (!items.length) {
+      els.summary.textContent = '아직 선택한 짐이 없어요.';
+      els.summary.classList.add('empty');
+    } else {
+      els.summary.textContent = items.join(', ');
+      els.summary.classList.remove('empty');
+    }
+    renderSizeCards();
+  }
+
+  function renderFees() {
+    els.distanceFeeText.textContent = formatWon(moveDistanceFee(state.distanceKm));
+    els.helperFeeText.textContent = formatWon(helperFee());
+    els.totalFeeText.textContent = formatWon(totalFee());
+  }
+
+  function renderDistance() {
+    els.distanceText.textContent = state.distanceKm > 0 ? `${state.distanceKm.toFixed(1)} km` : '주소를 입력해주세요';
+    els.distanceMeta.textContent = state.distanceMeta;
+  }
+
+  function renderAll() {
+    renderDistance();
+    renderSummary();
+    renderFees();
+  }
+
+  function setCalcButtonLoading(isLoading) {
+    els.calcBtn.disabled = isLoading;
+    els.calcBtn.textContent = isLoading ? '계산 중...' : '거리 계산하기';
+  }
+
+  function validateForSms() {
+    state.startAddress = cleanQuery(els.start.value);
+    state.endAddress = cleanQuery(els.end.value);
+
+    if (!state.startAddress || !state.endAddress) {
+      alert('출발지와 도착지 주소를 먼저 입력해줘.');
+      return false;
+    }
+    if (!(state.distanceKm > 0)) {
+      alert('먼저 거리 계산을 해줘야 정확한 예약 문구가 들어가요.');
+      return false;
+    }
+    return true;
+  }
+
   async function geocode(geocoder, address) {
     const kakao = window.kakao;
     const queries = uniqueQueries(address);
@@ -249,10 +335,7 @@
             resolve({
               x: Number(result[0].x),
               y: Number(result[0].y),
-              matchedAddress:
-                result[0].address_name ||
-                result[0].road_address?.address_name ||
-                query,
+              matchedAddress: result[0].address_name || result[0].road_address?.address_name || query,
               method: 'address',
             });
             return;
@@ -265,17 +348,11 @@
       new Promise((resolve, reject) => {
         places.keywordSearch(query, (result, status) => {
           if (status === kakao.maps.services.Status.OK && result?.length) {
-            const best = [...result].sort(
-              (a, b) => scorePlaceName(b, query) - scorePlaceName(a, query)
-            )[0];
+            const best = [...result].sort((a, b) => scorePlaceName(b, query) - scorePlaceName(a, query))[0];
             resolve({
               x: Number(best.x),
               y: Number(best.y),
-              matchedAddress:
-                best.address_name ||
-                best.road_address_name ||
-                best.place_name ||
-                query,
+              matchedAddress: best.address_name || best.road_address_name || best.place_name || query,
               method: 'keyword',
             });
             return;
@@ -292,25 +369,13 @@
       for (const attempt of attempts) {
         try {
           return await attempt(query);
-        } catch (err) {
-          lastError = err;
+        } catch (error) {
+          lastError = error;
         }
       }
     }
 
     throw lastError || new Error(`주소 검색 실패: ${address}`);
-  }
-
-  function haversineKm(a, b) {
-    const R = 6371;
-    const dLat = ((b.y - a.y) * Math.PI) / 180;
-    const dLon = ((b.x - a.x) * Math.PI) / 180;
-    const lat1 = (a.y * Math.PI) / 180;
-    const lat2 = (b.y * Math.PI) / 180;
-    const x =
-      Math.sin(dLat / 2) ** 2 +
-      Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   }
 
   async function fetchRoadDistanceKm(origin, destination) {
@@ -319,7 +384,11 @@
       destination: `${destination.x},${destination.y}`,
     });
 
-    const res = await fetch(`/.netlify/functions/kakaoDirections?${params.toString()}`);
+    const res = await fetch(`/.netlify/functions/kakaoDirections?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+
     if (!res.ok) {
       const text = await res.text();
       throw new Error(text || `Road distance failed: ${res.status}`);
@@ -333,16 +402,22 @@
   }
 
   async function calculateDistance() {
-    state.startAddress = (els.start.value || '').trim();
-    state.endAddress = (els.end.value || '').trim();
+    state.startAddress = cleanQuery(els.start.value);
+    state.endAddress = cleanQuery(els.end.value);
 
     if (!state.startAddress || !state.endAddress) {
       alert('출발지와 도착지 주소를 모두 입력해줘.');
       return;
     }
 
-    els.calcBtn.disabled = true;
-    els.calcBtn.textContent = '계산 중...';
+    if (state.startAddress === state.endAddress) {
+      state.distanceKm = 0.1;
+      state.distanceMeta = '같은 주소로 입력되어 최소 거리 기준으로 계산했어요.';
+      renderAll();
+      return;
+    }
+
+    setCalcButtonLoading(true);
     state.distanceMeta = '주소를 확인하고 있어요.';
     renderDistance();
 
@@ -357,7 +432,6 @@
         state.startAddress = origin.matchedAddress;
         els.start.value = origin.matchedAddress;
       }
-
       if (destination?.matchedAddress) {
         state.endAddress = destination.matchedAddress;
         els.end.value = destination.matchedAddress;
@@ -365,15 +439,12 @@
 
       try {
         state.distanceKm = await fetchRoadDistanceKm(origin, destination);
-        state.distanceMeta = `카카오 ${
-          origin.method === 'keyword' || destination.method === 'keyword'
-            ? '키워드/주소'
-            : '주소'
-        } 기준으로 계산됐어요.`;
+        state.distanceMeta = `카카오 ${origin.method === 'keyword' || destination.method === 'keyword' ? '키워드/주소' : '주소'} 기준으로 계산됐어요.`;
       } catch (roadError) {
         console.warn('Road distance fallback:', roadError);
         const base = haversineKm(origin, destination);
-        state.distanceKm = Math.round(base * 1.25 * 10) / 10;
+        const adjusted = Math.max(base * 1.25, 0.1);
+        state.distanceKm = Math.round(adjusted * 10) / 10;
         state.distanceMeta = '카카오 검색 좌표 기준 보정거리로 계산됐어요.';
       }
 
@@ -381,18 +452,21 @@
     } catch (error) {
       console.error(error);
       state.distanceKm = 0;
-      state.distanceMeta = '입력하신 주소를 다시 확인해주세요. 동 이름이나 역 이름, 건물명만 넣어도 다시 시도할 수 있어요.';
+      state.distanceMeta = '입력한 주소를 다시 확인해줘. 동 이름, 역 이름, 건물명처럼 러프한 주소도 다시 시도할 수 있어요.';
       renderAll();
-      alert('거리 계산에 실패했어. 부개동, 화곡동처럼 러프한 주소도 최대한 찾도록 되어 있어. 그래도 안 되면 구 이름이나 역 이름, 건물명을 한 번 더 붙여줘.');
+      alert('거리 계산에 실패했어. 예: 부개동, 화곡동, 까치산역처럼 다시 입력해봐.');
     } finally {
-      els.calcBtn.disabled = false;
-      els.calcBtn.textContent = '거리 계산하기';
+      setCalcButtonLoading(false);
     }
   }
 
   function openModal(sizeKey) {
-    activeSize = sizeKey;
     const group = ITEM_GROUPS[sizeKey];
+    if (!group) return;
+
+    state.lastOpenedSize = sizeKey;
+    modalPreviouslyFocused = document.activeElement;
+
     els.modalTitle.textContent = group.title;
     els.modalCopy.textContent = group.copy;
     els.modalList.innerHTML = '';
@@ -407,9 +481,9 @@
           <small>${desc}</small>
         </div>
         <div class="stepper">
-          <button type="button" data-item-minus="${name}">−</button>
-          <input type="number" min="0" value="${qty}" data-item-input="${name}" />
-          <button type="button" data-item-plus="${name}">+</button>
+          <button type="button" aria-label="${name} 수량 줄이기" data-item-minus="${name}">−</button>
+          <input type="number" inputmode="numeric" min="0" value="${qty}" data-item-input="${name}" />
+          <button type="button" aria-label="${name} 수량 늘리기" data-item-plus="${name}">+</button>
         </div>
       `;
       els.modalList.appendChild(row);
@@ -417,17 +491,29 @@
 
     els.modal.classList.remove('hidden');
     els.modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+
+    const firstInput = $('[data-item-input]', els.modalList);
+    if (firstInput) firstInput.focus();
   }
 
   function closeModal() {
     els.modal.classList.add('hidden');
     els.modal.setAttribute('aria-hidden', 'true');
-    activeSize = null;
+    document.body.classList.remove('modal-open');
     renderSummary();
+
+    if (modalPreviouslyFocused && typeof modalPreviouslyFocused.focus === 'function') {
+      modalPreviouslyFocused.focus();
+    }
+  }
+
+  function sanitizeQty(value) {
+    return Math.max(0, parseInt(String(value).replace(/[^0-9-]/g, ''), 10) || 0);
   }
 
   function setItemQty(name, next) {
-    const value = Math.max(0, parseInt(next, 10) || 0);
+    const value = sanitizeQty(next);
     if (value <= 0) delete state.selected[name];
     else state.selected[name] = value;
     renderSummary();
@@ -435,10 +521,9 @@
 
   function smsBody() {
     const items = currentSelectedEntries();
-    const helperText = [
-      state.helperFrom ? '출발지 도움' : null,
-      state.helperTo ? '도착지 도움' : null,
-    ].filter(Boolean).join(', ') || '없음';
+    const helperText = [state.helperFrom ? '출발지 도움' : null, state.helperTo ? '도착지 도움' : null]
+      .filter(Boolean)
+      .join(', ') || '없음';
 
     return [
       '디디운송 용달 예약 문의',
@@ -451,63 +536,97 @@
     ].join('\n');
   }
 
-  function goSms() {
+  function buildSmsHref() {
     const body = encodeURIComponent(smsBody());
-    window.location.href = `sms:${PHONE_NUMBER}?body=${body}`;
+    const isiOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    return isiOS ? `sms:${PHONE_NUMBER}&body=${body}` : `sms:${PHONE_NUMBER}?body=${body}`;
   }
 
-  $$('.size-card').forEach((btn) =>
-    btn.addEventListener('click', () => openModal(btn.dataset.size))
-  );
+  function goSms() {
+    if (!validateForSms()) return;
+    window.location.href = buildSmsHref();
+  }
 
-  els.calcBtn.addEventListener('click', calculateDistance);
+  function handleModalClick(event) {
+    const closeTrigger = event.target.closest('[data-close-modal]');
+    if (closeTrigger) {
+      closeModal();
+      return;
+    }
 
-  els.helpFrom.addEventListener('change', (e) => {
-    state.helperFrom = e.target.checked;
-    renderFees();
-  });
-
-  els.helpTo.addEventListener('change', (e) => {
-    state.helperTo = e.target.checked;
-    renderFees();
-  });
-
-  els.smsBtn.addEventListener('click', goSms);
-  els.modalConfirmBtn.addEventListener('click', closeModal);
-
-  els.modal.addEventListener('click', (e) => {
-    const closeTrigger = e.target.closest('[data-close-modal]');
-    if (closeTrigger) closeModal();
-
-    const minusBtn = e.target.closest('[data-item-minus]');
+    const minusBtn = event.target.closest('[data-item-minus]');
     if (minusBtn) {
       const name = minusBtn.getAttribute('data-item-minus');
-      const input = els.modalList.querySelector(
-        `[data-item-input="${CSS.escape(name)}"]`
-      );
-      const next = Math.max(0, (parseInt(input.value, 10) || 0) - 1);
+      const input = getModalInputByName(name);
+      if (!input) return;
+      const next = Math.max(0, sanitizeQty(input.value) - 1);
       input.value = String(next);
       setItemQty(name, next);
       return;
     }
 
-    const plusBtn = e.target.closest('[data-item-plus]');
+    const plusBtn = event.target.closest('[data-item-plus]');
     if (plusBtn) {
       const name = plusBtn.getAttribute('data-item-plus');
-      const input = els.modalList.querySelector(
-        `[data-item-input="${CSS.escape(name)}"]`
-      );
-      const next = (parseInt(input.value, 10) || 0) + 1;
+      const input = getModalInputByName(name);
+      if (!input) return;
+      const next = sanitizeQty(input.value) + 1;
       input.value = String(next);
       setItemQty(name, next);
     }
-  });
+  }
 
-  els.modalList.addEventListener('input', (e) => {
-    const input = e.target.closest('[data-item-input]');
+  function handleModalInput(event) {
+    const input = event.target.closest('[data-item-input]');
     if (!input) return;
-    setItemQty(input.getAttribute('data-item-input'), input.value);
-  });
+    const value = sanitizeQty(input.value);
+    input.value = String(value);
+    setItemQty(input.getAttribute('data-item-input'), value);
+  }
 
+  function handleModalKeydown(event) {
+    if (event.key === 'Escape' && !els.modal.classList.contains('hidden')) {
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+
+    if (event.key === 'Enter' && event.target.matches('[data-item-input]')) {
+      event.preventDefault();
+      closeModal();
+    }
+  }
+
+  function bindEvents() {
+    els.sizeCards.forEach((btn) => {
+      btn.addEventListener('click', () => openModal(btn.dataset.size));
+    });
+
+    els.calcBtn.addEventListener('click', calculateDistance);
+    els.start.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') calculateDistance();
+    });
+    els.end.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') calculateDistance();
+    });
+
+    els.helpFrom.addEventListener('change', (event) => {
+      state.helperFrom = event.target.checked;
+      renderFees();
+    });
+    els.helpTo.addEventListener('change', (event) => {
+      state.helperTo = event.target.checked;
+      renderFees();
+    });
+
+    els.smsBtn.addEventListener('click', goSms);
+    els.modalConfirmBtn.addEventListener('click', closeModal);
+    els.modal.addEventListener('click', handleModalClick);
+    els.modalList.addEventListener('input', handleModalInput);
+    els.modal.addEventListener('keydown', handleModalKeydown);
+    document.addEventListener('keydown', handleModalKeydown);
+  }
+
+  bindEvents();
   renderAll();
 })();
