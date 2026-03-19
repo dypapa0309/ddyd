@@ -3,26 +3,113 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>디디운송 | 용달 전용 예약</title>
-  <meta name="description" content="1층에서 1층 기준의 간단한 용달 예약. 주소 입력 후 거리 계산, 짐 선택, 기사 도움 여부만으로 빠르게 예약하세요." />
+
+  <!-- ✅ Primary SEO -->
+  <title>디디용달 | 전국 당일 용달 예약 – 거리 기준 요금 자동 계산</title>
+  <meta name="description" content="전국 어디서든 간단하게 용달 예약. 출발지·도착지 주소 입력 후 거리 요금 자동 계산, 짐 크기 선택, 기사 도움 여부까지 30초 안에 예약 문자 발송. 1층 기준 소형이사·짐 운반 전문." />
+  <meta name="keywords" content="용달, 전국용달, 당일용달, 용달예약, 용달비용, 용달요금, 1톤용달, 소형이사, 이삿짐용달, 짐운반, 화물운송, 용달차, 용달기사, 인천용달, 서울용달, 경기용달, 부산용달, 대구용달, 대전용달, 광주용달, 수원용달, 성남용달, 부평용달, 강서용달" />
+  <meta name="author" content="디디용달 (DDLOGI)" />
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <link rel="canonical" href="https://ddlogi-yd.netlify.app/" />
+
+  <!-- ✅ 네이버 서치어드바이저 -->
+  <meta name="naver-site-verification" content="4653c2bd46efb64d364ec4f74487613a1972d5f0" />
+
+  <!-- ✅ Open Graph (카카오톡·페이스북·네이버 공유용) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="디디용달" />
+  <meta property="og:title" content="디디용달 | 전국 당일 용달 예약" />
+  <meta property="og:description" content="주소 입력 → 거리 자동 계산 → 바로 예약. 복잡한 옵션 없이 30초 안에 용달 예약 문자를 보내세요." />
+  <meta property="og:url" content="https://ddlogi-yd.netlify.app/" />
+  <meta property="og:image" content="https://ddlogi-yd.netlify.app/og-image.png" /> <!-- ✏️ 1200×630px 이미지 루트에 업로드 후 활성화 -->
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="ko_KR" />
+
+  <!-- ✅ Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="디디용달 | 전국 당일 용달 예약" />
+  <meta name="twitter:description" content="주소 입력 → 거리 자동 계산 → 바로 예약. 30초 안에 용달 예약 문자를 보내세요." />
+  <meta name="twitter:image" content="https://ddlogi-yd.netlify.app/og-image.png" />
+
+  <!-- ✅ JSON-LD 구조화 데이터 (구글 리치 결과용) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "MovingCompany",
+    "name": "디디용달",
+    "alternateName": ["DDLOGI 용달", "디디로지 용달"],
+    "description": "전국 당일 용달 서비스. 거리 자동 계산 및 문자 예약 시스템으로 30초 안에 예약 가능.",
+    "url": "https://ddlogi-yd.netlify.app/",
+    "image": "https://ddlogi-yd.netlify.app/og-image.png",
+    "priceRange": "₩₩",
+    "currenciesAccepted": "KRW",
+    "paymentAccepted": "계좌이체, 현금",
+    "areaServed": {
+      "@type": "Country",
+      "name": "대한민국"
+    },
+    "serviceType": ["용달", "소형이사", "당일화물운송", "짐운반"],
+    "hasOfferCatalog": {
+      "@type": "OfferCatalog",
+      "name": "용달 서비스",
+      "itemListElement": [
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "소형짐 용달",
+            "description": "가방, 모니터, 전자레인지 등 가벼운 짐 운반"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "중형짐 용달",
+            "description": "책상, 행거, 자전거, 소형 가전 운반"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "대형짐 용달",
+            "description": "냉장고, 침대, 소파, 안마의자 등 대형 가구 운반"
+          }
+        }
+      ]
+    },
+    "sameAs": [
+      "https://ddlogi.netlify.app/"
+    ]
+  }
+  </script>
+
+  <!-- ✅ 모바일 / PWA -->
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="디디용달" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+  <!-- ✅ 스타일 -->
   <link rel="stylesheet" href="style.css" />
-  
+
+  <!-- ✅ 카카오맵 SDK -->
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=20db772c4c2bd586dfe7c795e37c3d11&libraries=services&autoload=false"></script>
 
-  <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-3PZGXGCC42"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-3PZGXGCC42');
-</script>
-
-
-
+  <!-- ✅ Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3PZGXGCC42"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-3PZGXGCC42');
+  </script>
 
 </head>
+
 <body>
   <div class="shell">
     <header class="hero card">
