@@ -1,6 +1,6 @@
 (() => {
   const PHONE_NUMBER = '01075416143';
-  const HELPER_FEE = 15000;
+  const HELPER_FEE = 10000;
   const BASE_VEHICLE_FEE = 30000;
 
   const state = {
