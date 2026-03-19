@@ -106,14 +106,14 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function getKakaoJsKey() {
-    return (
-      document.documentElement.getAttribute('data-kakao-js-key') ||
-      $('meta[name="kakao-javascript-key"]')?.getAttribute('content') ||
-      window.KAKAO_JS_KEY ||
-      ''
-    ).trim();
-  }
+ function getKakaoJsKey() {
+  return (
+    $('meta[name="kakao-javascript-key"]')?.getAttribute('content') ||
+    document.documentElement.getAttribute('data-kakao-js-key') ||
+    window.KAKAO_JS_KEY ||
+    ''
+  ).trim();
+}
 
   function buildKakaoSdkUrl() {
     const key = getKakaoJsKey();
@@ -129,6 +129,32 @@
     return Array.from(document.scripts).find((script) =>
       String(script.src || '').includes('dapi.kakao.com/v2/maps/sdk.js')
     ) || null;
+  }
+
+  function resetMismatchedKakaoScript(expectedUrl) {
+    const existing = findKakaoScript();
+    if (!existing) return null;
+
+    const existingSrc = String(existing.src || '');
+    if (!existingSrc) return existing;
+
+    try {
+      const current = new URL(existingSrc, window.location.href);
+      const expected = new URL(expectedUrl, window.location.href);
+      const currentKey = current.searchParams.get('appkey') || '';
+      const expectedKey = expected.searchParams.get('appkey') || '';
+      if (currentKey && expectedKey && currentKey !== expectedKey) {
+        existing.remove();
+        if (window.kakao) {
+          try { delete window.kakao; } catch (_) { window.kakao = undefined; }
+        }
+        return null;
+      }
+    } catch (_) {
+      return existing;
+    }
+
+    return existing;
   }
 
   function waitForKakaoGlobals(timeoutMs = KAKAO_READY_TIMEOUT) {
@@ -152,12 +178,13 @@
   async function ensureKakaoScriptLoaded() {
     if (window.kakao?.maps) return true;
 
-    let script = findKakaoScript();
+    const sdkUrl = buildKakaoSdkUrl();
+    if (!sdkUrl) {
+      throw new Error('카카오 JavaScript 키가 비어 있어 SDK를 불러올 수 없어요.');
+    }
+
+    let script = resetMismatchedKakaoScript(sdkUrl);
     if (!script) {
-      const sdkUrl = buildKakaoSdkUrl();
-      if (!sdkUrl) {
-        throw new Error('카카오 JavaScript 키가 비어 있어 SDK를 불러올 수 없어요.');
-      }
       script = document.createElement('script');
       script.src = sdkUrl;
       script.async = true;
@@ -468,6 +495,7 @@
     const res = await fetch(`/.netlify/functions/kakaoDirections?${params.toString()}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
+      cache: 'no-store',
     });
 
     if (!res.ok) {
